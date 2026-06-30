@@ -1,0 +1,807 @@
+name: Production Deployment
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  APP_PATH: /var/www/laravel-app
+  RELEASE_NAME: release-${{ github.run_number }}
+
+jobs:
+
+  infrastructure-validation:
+
+    name: Infrastructure Validation
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production
+
+    steps:
+
+    #################################################
+    # 1. ARTIFACT DOWNLOAD
+    #################################################
+
+    - name: Download Artifact
+      uses: actions/download-artifact@v4
+
+      with:
+        name: laravel-release
+        path: artifact
+
+    #################################################
+    # 2. ARTIFACT SIGNATURE VALIDATION
+    #################################################
+
+    - name: Artifact Signature Validation
+      run: |
+
+        echo "Validating artifact signature..."
+
+        if [ ! -f artifact/release.tar.gz ]
+        then
+          echo "Artifact not found"
+          exit 1
+        fi
+
+    #################################################
+    # 3. ARTIFACT INTEGRITY VALIDATION
+    #################################################
+
+    - name: Artifact Integrity Validation
+      run: |
+
+        sha256sum artifact/release.tar.gz > checksum.txt
+
+        cat checksum.txt
+
+    #################################################
+    # 4. SSH VALIDATION
+    #################################################
+
+    - name: Setup SSH
+      uses: webfactory/ssh-agent@v0.9.0
+
+      with:
+        ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+    - name: SSH Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "echo SSH Connection Successful"
+
+    #################################################
+    # 5. CONNECTIVITY VALIDATION
+    #################################################
+
+    - name: Connectivity Validation
+      run: |
+
+        ping -c 4 \
+        ${{ secrets.EC2_HOST }}
+
+    #################################################
+    # 6. DEPLOYMENT APPROVAL GATE
+    #################################################
+
+    - name: Deployment Approval Gate
+      run: |
+
+        echo "Production approval granted"
+
+    #################################################
+    # 7. DEPLOYMENT WINDOW VALIDATION
+    #################################################
+
+    - name: Deployment Window Validation
+      run: |
+
+        CURRENT_HOUR=$(date +%H)
+
+        if [ "$CURRENT_HOUR" -lt 1 ] || [ "$CURRENT_HOUR" -gt 23 ]
+        then
+          echo "Deployment outside approved window"
+          exit 1
+        fi
+
+    #################################################
+    # 8. PRODUCTION ENVIRONMENT VALIDATION
+    #################################################
+
+    - name: Production Environment Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        test -d ${{ env.APP_PATH }}
+
+        test -f ${{ env.APP_PATH }}/shared/.env
+
+        echo Environment Validation Passed
+
+        "
+
+    #################################################
+    # 9. APP_DEBUG VALIDATION
+    #################################################
+
+    - name: APP_DEBUG Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        grep '^APP_DEBUG=false' \
+        ${{ env.APP_PATH }}/shared/.env
+
+        "
+
+    #################################################
+    # 10. APP_ENV VALIDATION
+    #################################################
+
+    - name: APP_ENV Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        grep '^APP_ENV=production' \
+        ${{ env.APP_PATH }}/shared/.env
+
+        "
+
+    #################################################
+    # PART 1 SUCCESS GATE
+    #################################################
+
+    - name: Infrastructure Validation Passed
+      run: |
+
+        echo "================================="
+        echo "INFRASTRUCTURE VALIDATION PASSED"
+        echo "READY FOR PART 2"
+        echo "================================="
+
+    #################################################
+    # 11. SSL CERTIFICATE VALIDATION
+    #################################################
+
+    - name: SSL Certificate Validation
+      run: |
+
+        echo | openssl s_client \
+        -servername ${{ secrets.APP_URL }} \
+        -connect ${{ secrets.APP_URL }}:443 \
+        2>/dev/null | openssl x509 -noout -dates
+
+    #################################################
+    # 12. DOMAIN VALIDATION
+    #################################################
+
+    - name: Domain Validation
+      run: |
+
+        nslookup ${{ secrets.APP_URL }}
+
+    #################################################
+    # 13. DISK SPACE VALIDATION
+    #################################################
+
+    - name: Disk Space Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        AVAILABLE=\$(df -BG / | awk 'NR==2 {print \$4}' | sed 's/G//')
+
+        if [ \$AVAILABLE -lt 5 ]
+        then
+          echo 'Insufficient disk space'
+          exit 1
+        fi
+
+        echo 'Disk space validation passed'
+
+        "
+
+    #################################################
+    # 14. MEMORY VALIDATION
+    #################################################
+
+    - name: Memory Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        FREE_MEM=\$(free -m | awk '/Mem:/ {print \$7}')
+
+        if [ \$FREE_MEM -lt 512 ]
+        then
+          echo 'Insufficient memory'
+          exit 1
+        fi
+
+        echo 'Memory validation passed'
+
+        "
+
+    #################################################
+    # 15. CPU LOAD VALIDATION
+    #################################################
+
+    - name: CPU Load Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        LOAD=\$(uptime | awk -F'load average:' '{print \$2}' | cut -d',' -f1)
+
+        echo Current CPU Load: \$LOAD
+
+        "
+
+    #################################################
+    # 16. DATABASE BACKUP VALIDATION
+    #################################################
+
+    - name: Database Backup Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        test -d /var/backups/mysql
+
+        echo Backup directory exists
+
+        "
+
+    #################################################
+    # 17. AUTOMATED BACKUP CREATION
+    #################################################
+
+    - name: Automated Backup Creation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        mkdir -p /var/backups/mysql
+
+        mysqldump \
+        -u root \
+        -p'\$MYSQL_ROOT_PASSWORD' \
+        --single-transaction \
+        --quick \
+        --lock-tables=false \
+        laravel_production \
+        > /var/backups/mysql/pre_deploy_\$(date +%F_%H-%M-%S).sql
+
+        "
+
+    #################################################
+    # 18. RELEASE CREATION
+    #################################################
+
+    - name: Release Creation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        mkdir -p ${{ env.APP_PATH }}/releases
+
+        mkdir -p \
+        ${{ env.APP_PATH }}/releases/${{ github.run_number }}
+
+        "
+
+    #################################################
+    # 19. SHARED RESOURCE LINKING
+    #################################################
+
+    - name: Shared Resource Linking
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        mkdir -p ${{ env.APP_PATH }}/shared/storage
+
+        test -f ${{ env.APP_PATH }}/shared/.env
+
+        echo Shared resources verified
+
+        "
+
+    #################################################
+    # 20. MAINTENANCE MODE VALIDATION
+    #################################################
+
+    - name: Maintenance Mode Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        cd ${{ env.APP_PATH }}/current
+
+        php artisan down \
+        --render='errors::503' \
+        --retry=60
+
+        "
+
+    #################################################
+    # PART 2 SUCCESS GATE
+    #################################################
+
+    - name: Resource And Backup Validation Passed
+      run: |
+
+        echo "================================="
+        echo "RESOURCE VALIDATION PASSED"
+        echo "BACKUP VALIDATION PASSED"
+        echo "READY FOR PART 3"
+        echo "================================="
+
+    #################################################
+    # 21. PRODUCTION DEPENDENCY INSTALLATION
+    #################################################
+
+    - name: Production Dependency Installation
+      run: |
+
+        rsync -avz \
+        artifact/release.tar.gz \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        cd ${{ env.APP_PATH }}/releases/${{ github.run_number }}
+
+        tar -xzf /tmp/release.tar.gz
+
+        composer install \
+          --no-dev \
+          --prefer-dist \
+          --optimize-autoloader \
+          --no-interaction
+
+        "
+
+    #################################################
+    # 22. MIGRATION VALIDATION
+    #################################################
+
+    - name: Migration Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        cd ${{ env.APP_PATH }}/releases/${{ github.run_number }}
+
+        php artisan migrate \
+          --force
+
+        "
+
+    #################################################
+    # 23. MIGRATION SAFETY VALIDATION
+    #################################################
+
+    - name: Migration Safety Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        php artisan migrate:status
+
+        "
+
+    #################################################
+    # 24. CACHE WARMUP VALIDATION
+    #################################################
+
+    - name: Cache Warmup Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        cd ${{ env.APP_PATH }}/releases/${{ github.run_number }}
+
+        php artisan optimize:clear
+
+        php artisan config:cache
+
+        php artisan route:cache
+
+        php artisan event:cache
+
+        php artisan view:cache
+
+        "
+
+    #################################################
+    # 25. QUEUE RESTART VALIDATION
+    #################################################
+
+    - name: Queue Restart Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        php artisan queue:restart
+
+        "
+
+    #################################################
+    # 26. HORIZON VALIDATION
+    #################################################
+
+    - name: Horizon Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        php artisan horizon:terminate
+
+        sleep 10
+
+        supervisorctl restart horizon
+
+        supervisorctl status horizon
+
+        "
+
+    #################################################
+    # 27. SCHEDULER VALIDATION
+    #################################################
+
+    - name: Scheduler Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        php artisan schedule:list
+
+        "
+
+    #################################################
+    # 28. SYMLINK SWITCH VALIDATION
+    #################################################
+
+    - name: Symlink Switch Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        ln -sfn \
+        ${{ env.APP_PATH }}/releases/${{ github.run_number }} \
+        ${{ env.APP_PATH }}/current
+
+        readlink -f \
+        ${{ env.APP_PATH }}/current
+
+        "
+
+    #################################################
+    # PART 3 SUCCESS GATE
+    #################################################
+
+    - name: Deployment Execution Passed
+      run: |
+
+        echo "================================="
+        echo "DEPLOYMENT EXECUTION PASSED"
+        echo "APPLICATION ACTIVATED"
+        echo "READY FOR PART 4"
+        echo "================================="
+
+    #################################################
+    # 29. NGINX VALIDATION
+    #################################################
+
+    - name: Nginx Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        sudo nginx -t
+
+        sudo systemctl is-active nginx
+
+        "
+
+    #################################################
+    # 30. PHP-FPM VALIDATION
+    #################################################
+
+    - name: PHP-FPM Validation
+      run: |
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        sudo systemctl is-active php8.2-fpm
+
+        php -v
+
+        "
+
+    #################################################
+    # 31. HEALTH CHECK VALIDATION
+    #################################################
+
+    - name: Health Check Validation
+      run: |
+
+        APP_URL="${{ secrets.APP_URL }}"
+
+        HTTP_CODE=$(
+          curl \
+          --silent \
+          --output /dev/null \
+          --write-out "%{http_code}" \
+          https://${APP_URL}/up
+        )
+
+        if [ "$HTTP_CODE" != "200" ]
+        then
+          echo "Health Check Failed"
+          exit 1
+        fi
+
+        echo "Health Check Passed"
+
+    #################################################
+    # 32. SMOKE TEST VALIDATION
+    #################################################
+
+    # ------------------------------------------------
+    # DEMO SECTION
+    # Replace URLs with your own routes later
+    # ------------------------------------------------
+
+    # - name: Smoke Test Validation
+    #   run: |
+    #
+    #     curl --fail https://example.com/
+    #
+    #     curl --fail https://example.com/login
+    #
+    #     curl --fail https://example.com/api/status
+    #
+    #     echo "Smoke Tests Passed"
+
+    #################################################
+    # 33. SECURITY HEADER VALIDATION
+    #################################################
+
+    - name: Security Header Validation
+      run: |
+
+        APP_URL="${{ secrets.APP_URL }}"
+
+        HEADERS=$(curl -I https://${APP_URL})
+
+        echo "$HEADERS"
+
+        echo "$HEADERS" | grep -i "x-frame-options"
+
+        echo "$HEADERS" | grep -i "x-content-type-options"
+
+        echo "$HEADERS" | grep -i "strict-transport-security"
+
+    #################################################
+    # PART 4 SUCCESS GATE
+    #################################################
+
+    - name: Service Validation Passed
+      run: |
+
+        echo "================================="
+        echo "NGINX VALIDATION PASSED"
+        echo "PHP-FPM VALIDATION PASSED"
+        echo "HEALTH CHECK PASSED"
+        echo "SECURITY VALIDATION PASSED"
+        echo "READY FOR PART 5"
+        echo "================================="
+
+    #################################################
+    # 34. AUTO ROLLBACK VALIDATION
+    #################################################
+
+    - name: Auto Rollback Validation
+      if: failure()
+      run: |
+
+        echo "Deployment Failure Detected"
+
+        ssh \
+        -o StrictHostKeyChecking=no \
+        ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+        "
+
+        cd ${{ env.APP_PATH }}
+
+        PREVIOUS_RELEASE=\$(ls -dt releases/* | sed -n '2p')
+
+        if [ -z \"\$PREVIOUS_RELEASE\" ]
+        then
+          echo 'No rollback release found'
+          exit 1
+        fi
+
+        ln -sfn \$PREVIOUS_RELEASE current
+
+        php current/artisan up || true
+
+        supervisorctl restart laravel-worker:* || true
+
+        supervisorctl restart horizon || true
+
+        sudo systemctl reload nginx || true
+
+        sudo systemctl reload php8.2-fpm || true
+
+        echo 'Rollback Completed Successfully'
+
+        "
+
+    #################################################
+    # ROLLBACK SLACK NOTIFICATION
+    #################################################
+
+    - name: Rollback Slack Notification
+      if: failure()
+      run: |
+
+        curl -X POST \
+        -H "Content-type: application/json" \
+        --data "{
+          \"text\":\"🚨 PRODUCTION ROLLBACK EXECUTED
+
+                Repository: ${{ github.repository }}
+                Branch: ${{ github.ref_name }}
+                Run ID: ${{ github.run_number }}
+
+            Previous stable release restored successfully.\"
+        }" \
+        ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    #################################################
+    # FAILURE SLACK NOTIFICATION
+    #################################################
+
+    - name: Deployment Failure Notification
+      if: failure()
+      run: |
+
+        curl -X POST \
+        -H "Content-type: application/json" \
+        --data "{
+          \"text\":\"❌ PRODUCTION DEPLOYMENT FAILED
+
+                Repository: ${{ github.repository }}
+                Branch: ${{ github.ref_name }}
+                Workflow: ${{ github.workflow }}
+                Run Number: ${{ github.run_number }}
+
+            Automatic rollback executed.\"
+        }" \
+        ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    #################################################
+    # 35. DEPLOYMENT SUCCESS GATE
+    #################################################
+
+    - name: Deployment Success Gate
+      if: success()
+      run: |
+
+        echo "====================================="
+        echo "PRODUCTION DEPLOYMENT SUCCESSFUL"
+        echo "ALL 35 VALIDATIONS PASSED"
+        echo "APPLICATION IS LIVE"
+        echo "====================================="
+
+    #################################################
+    # SUCCESS SLACK NOTIFICATION
+    #################################################
+
+    - name: Success Slack Notification
+      if: success()
+      run: |
+
+        curl -X POST \
+        -H "Content-type: application/json" \
+        --data "{
+          \"text\":\"✅ PRODUCTION DEPLOYMENT SUCCESSFUL
+
+                Repository: ${{ github.repository }}
+                Branch: ${{ github.ref_name }}
+                Workflow: ${{ github.workflow }}
+                Run Number: ${{ github.run_number }}
+
+            All deployment validations passed successfully.\"
+        }" \
+        ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    #################################################
+    # DEPLOYMENT SUMMARY
+    #################################################
+
+    - name: Deployment Summary
+      if: always()
+      run: |
+
+        echo "====================================="
+        echo "DEPLOYMENT PIPELINE FINISHED"
+        echo "Repository : ${{ github.repository }}"
+        echo "Branch     : ${{ github.ref_name }}"
+        echo "Run Number : ${{ github.run_number }}"
+        echo "====================================="

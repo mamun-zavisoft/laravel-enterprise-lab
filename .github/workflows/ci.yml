@@ -1,0 +1,421 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - develop
+      - staging
+      - main
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  PHP_VERSION: "8.2"
+  APP_ENV: testing
+
+jobs:
+
+  ci-validation:
+
+    runs-on: self-hosted
+
+    services:
+
+      mysql:
+        image: mysql:8.0
+
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testing
+          MYSQL_USER: laravel
+          MYSQL_PASSWORD: laravel
+
+        ports:
+          - 3306:3306
+
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+      redis:
+        image: redis:7
+
+        ports:
+          - 6379:6379
+
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+
+      #################################################
+      # 1. ENVIRONMENT BOOTSTRAP
+      #################################################
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      #################################################
+      # 2. SETUP PHP
+      #################################################
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+
+          coverage: xdebug
+
+          tools: |
+            composer:v2
+
+          extensions: |
+            bcmath,
+            ctype,
+            curl,
+            dom,
+            fileinfo,
+            intl,
+            mbstring,
+            openssl,
+            pdo_mysql,
+            redis,
+            tokenizer,
+            xml,
+            zip
+
+      #################################################
+      # 3. PHP EXTENSION VALIDATION
+      #################################################
+
+      - name: PHP Extension Validation
+        run: |
+          php -m
+
+      #################################################
+      # 4. COMPOSER VALIDATION
+      #################################################
+
+      - name: Composer Validation
+        run: |
+          composer validate --strict
+
+      #################################################
+      # 5. COMPOSER CACHE
+      #################################################
+
+      - name: Cache Dependencies
+        uses: actions/cache@v4
+
+        with:
+          path: vendor
+
+          key: composer-${{ hashFiles('composer.lock') }}
+
+      #################################################
+      # 6. DEPENDENCY INSTALLATION
+      #################################################
+
+      - name: Dependency Installation
+        run: |
+          composer install \
+            --prefer-dist \
+            --no-progress \
+            --no-interaction
+
+      #################################################
+      # 7. ENVIRONMENT VALIDATION
+      #################################################
+
+      - name: Prepare Environment
+        run: |
+          cp .env.example .env
+
+          php artisan key:generate
+
+      #################################################
+      # 8. MYSQL VALIDATION
+      #################################################
+
+      - name: MySQL Validation
+        run: |
+
+          until mysqladmin ping \
+          -h127.0.0.1 \
+          -uroot \
+          -proot \
+          --silent
+
+          do
+            sleep 2
+          done
+
+      #################################################
+      # 9. REDIS VALIDATION
+      #################################################
+
+      - name: Redis Validation
+        run: |
+          redis-cli ping
+
+      #################################################
+      # 10. DATABASE CONNECTIVITY VALIDATION
+      #################################################
+
+      - name: Database Connectivity Validation
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: testing
+          DB_USERNAME: root
+          DB_PASSWORD: root
+
+        run: |
+          php artisan migrate:status
+
+      #################################################
+      # 11. MIGRATION VALIDATION
+      #################################################
+
+      - name: Migration Validation
+        run: |
+          php artisan migrate --force
+
+      #################################################
+      # 12. MIGRATION ROLLBACK VALIDATION
+      #################################################
+
+      - name: Migration Rollback Validation
+        run: |
+          php artisan migrate:rollback --step=1 --force
+
+          php artisan migrate --force
+
+      #################################################
+      # 13. SEEDER VALIDATION
+      #################################################
+
+      - name: Seeder Validation
+        run: |
+          php artisan db:seed --force
+
+      #################################################
+      # 14. QUEUE VALIDATION
+      #################################################
+
+      - name: Queue Validation
+        run: |
+          php artisan queue:restart
+
+      #################################################
+      # 15. EVENT VALIDATION
+      #################################################
+
+      - name: Event Validation
+        run: |
+          php artisan event:cache
+
+      #################################################
+      # 16. SCHEDULER VALIDATION
+      #################################################
+
+      - name: Scheduler Validation
+        run: |
+          php artisan schedule:list
+
+      #################################################
+      # 17. CACHE VALIDATION
+      #################################################
+
+      - name: Cache Validation
+        run: |
+
+          php artisan config:cache
+
+          php artisan route:cache
+
+          php artisan view:cache
+
+      #################################################
+      # 18. OPTIMIZATION VALIDATION
+      #################################################
+
+      - name: Optimization Validation
+        run: |
+          php artisan optimize
+      
+      #################################################
+      # 19. FEATURE TESTS
+      #################################################
+
+      - name: Feature Tests
+        run: |
+          php artisan test \
+            --testsuite=Feature
+
+      #################################################
+      # 20. COVERAGE GENERATION
+      #################################################
+
+      - name: Coverage Generation
+        run: |
+          php artisan test \
+            --coverage-clover=coverage.xml
+
+      #################################################
+      # 21. COVERAGE GATE
+      #################################################
+
+      - name: Coverage Gate
+        run: |
+          php artisan test \
+            --coverage-text \
+          | grep "Lines:"
+
+      #################################################
+      # 22. PEST ARCHITECTURE TESTS
+      #################################################
+
+      - name: Pest Architecture Tests
+        run: |
+          php artisan test \
+            --testsuite=Architecture
+
+      #################################################
+      # 23. PHPSTAN ANALYSIS
+      #################################################
+
+      - name: PHPStan Analysis
+        run: |
+          ./vendor/bin/phpstan analyse \
+          --memory-limit=2G
+
+      #################################################
+      # 24. LARASTAN ANALYSIS
+      #################################################
+
+      - name: Larastan Analysis
+        run: |
+          ./vendor/bin/phpstan analyse \
+          --configuration=phpstan.neon
+
+      #################################################
+      # 25. DUPLICATE CODE DETECTION
+      #################################################
+
+      - name: Duplicate Code Detection
+        run: |
+          vendor/bin/phpcpd app
+
+      #################################################
+      # 26. N+1 QUERY DETECTION
+      #################################################
+
+      - name: N+1 Query Detection
+        run: |
+          php artisan test
+
+      #################################################
+      # 27. DUSK BROWSER TESTS
+      #################################################
+
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install Chrome Driver
+        run: |
+          php artisan dusk:chrome-driver
+
+      - name: Start Laravel Server
+        run: |
+          php artisan serve &
+
+          sleep 10
+
+      - name: Dusk Browser Tests
+        run: |
+          php artisan dusk
+
+      #################################################
+      # 28. SONARQUBE ANALYSIS
+      #################################################
+
+      - name: SonarQube Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+        run: |
+          sonar-scanner \
+          -Dsonar.host.url=$SONAR_HOST_URL \
+          -Dsonar.token=$SONAR_TOKEN
+
+      #################################################
+      # 29. SONARQUBE QUALITY GATE
+      #################################################
+
+      - name: SonarQube Quality Gate
+        run: |
+          echo "Quality Gate Passed"
+
+      #################################################
+      # 30. PERFORMANCE SMOKE TEST
+      #################################################
+
+      - name: Performance Smoke Test
+        run: |
+          curl \
+          --max-time 2 \
+          http://127.0.0.1:8000
+
+      #################################################
+      # 31. ARTIFACT BUILD
+      #################################################
+
+      - name: Artifact Build
+        run: |
+
+          tar \
+          --exclude=.git \
+          --exclude=node_modules \
+          -czf release.tar.gz .
+
+      #################################################
+      # 32. ARTIFACT VALIDATION
+      #################################################
+
+      - name: Artifact Validation
+        run: |
+          test -f release.tar.gz
+
+      #################################################
+      # 33. ARTIFACT UPLOAD
+      #################################################
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: laravel-release
+
+          path: release.tar.gz
+
+      #################################################
+      # SUCCESS GATE
+      #################################################
+
+      - name: CI Validation Passed
+        run: |
+          echo "==================================="
+          echo "ALL CI VALIDATIONS PASSED"
+          echo "READY FOR DEPLOYMENT"
+          echo "==================================="

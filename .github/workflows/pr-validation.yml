@@ -1,16 +1,226 @@
-name: PR Validation
+name: Pull Request Validation
 
 on:
-  push:
+  pull_request:
     branches:
+      - develop
+      - staging
       - main
-  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  security-events: write
+
+env:
+  PHP_VERSION: "8.2"
 
 jobs:
-  build:
+
+  pr-validation:
+
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Run a command
-        run: echo "Workflow triggered!"
+
+    ####################################################
+    # 1. CHECKOUT
+    ####################################################
+
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    ####################################################
+    # 2. BRANCH NAMING VALIDATION
+    ####################################################
+
+    - name: Branch Naming Validation
+      run: |
+        BRANCH="${{ github.head_ref }}"
+
+        if [[ ! "$BRANCH" =~ ^(feature|bugfix|hotfix|release)\/[a-zA-Z0-9._-]+$ ]]
+        then
+          echo "Invalid branch naming convention."
+          exit 1
+        fi
+
+    ####################################################
+    # 3. PR TITLE VALIDATION
+    ####################################################
+
+    - name: PR Title Validation
+      run: |
+        TITLE="${{ github.event.pull_request.title }}"
+
+        if [[ ! "$TITLE" =~ ^(feat|fix|refactor|docs|test|chore):\ .+ ]]
+        then
+          echo "Invalid PR title format."
+          exit 1
+        fi
+
+    ####################################################
+    # 4. COMMIT MESSAGE VALIDATION
+    ####################################################
+
+    - name: Commit Message Validation
+      run: |
+        git log origin/${{ github.base_ref }}..HEAD \
+          --pretty=format:"%s" > commits.txt
+
+        while read line
+        do
+          if [[ ! "$line" =~ ^(feat|fix|refactor|docs|test|chore)(\(.+\))?:\ .+ ]]
+          then
+            echo "Invalid commit message:"
+            echo "$line"
+            exit 1
+          fi
+        done < commits.txt
+
+    ####################################################
+    # 5. SETUP PHP
+    ####################################################
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ env.PHP_VERSION }}
+        coverage: none
+        tools: composer:v2
+        extensions: >
+          bcmath,
+          ctype,
+          curl,
+          dom,
+          fileinfo,
+          intl,
+          mbstring,
+          openssl,
+          pdo_mysql,
+          tokenizer,
+          xml,
+          zip
+
+    ####################################################
+    # 6. COMPOSER VALIDATION
+    ####################################################
+
+    - name: Composer Validation
+      run: composer validate --strict
+
+    ####################################################
+    # 7. DEPENDENCY REVIEW
+    ####################################################
+
+    - name: Dependency Review
+      uses: actions/dependency-review-action@v4
+
+    ####################################################
+    # 8. DEPENDENCY INSTALLATION
+    ####################################################
+
+    - name: Dependency Installation
+      run: |
+        composer install \
+          --prefer-dist \
+          --no-progress \
+          --no-interaction
+
+    ####################################################
+    # 9. PHP SYNTAX CHECK
+    ####################################################
+
+    - name: PHP Syntax Check
+      run: |
+        find app bootstrap config database routes tests \
+          -name "*.php" \
+          -print0 | xargs -0 -n1 php -l
+
+    ####################################################
+    # 10. LARAVEL PINT
+    ####################################################
+
+    - name: Laravel Pint
+      run: |
+        ./vendor/bin/pint --test
+
+    ####################################################
+    # 11. PHPSTAN ANALYSIS
+    ####################################################
+
+    - name: PHPStan Analysis
+      run: |
+        ./vendor/bin/phpstan analyse \
+        --memory-limit=2G
+
+    ####################################################
+    # 12. LARASTAN ANALYSIS
+    ####################################################
+
+    - name: Larastan Analysis
+      run: |
+        ./vendor/bin/phpstan analyse \
+        --configuration=phpstan.neon
+
+    ####################################################
+    # 13. COMPOSER AUDIT
+    ####################################################
+
+    - name: Composer Audit
+      run: composer audit
+
+    ####################################################
+    # 14. GITLEAKS SCAN
+    ####################################################
+
+    - name: Gitleaks Scan
+      uses: gitleaks/gitleaks-action@v2
+
+    ####################################################
+    # 15. SEMGREP SCAN
+    ####################################################
+
+    - name: Semgrep Scan
+      uses: returntocorp/semgrep-action@v1
+      with:
+        config: auto
+
+    ####################################################
+    # 16. PREPARE LARAVEL ENVIRONMENT
+    ####################################################
+
+    - name: Prepare Environment
+      run: |
+        cp .env.example .env
+        php artisan key:generate
+
+    ####################################################
+    # 17. ARCHITECTURE TESTS
+    ####################################################
+
+    - name: Architecture Tests
+      run: |
+        php artisan test \
+          --testsuite=Architecture
+
+    ####################################################
+    # 18. UNIT TESTS
+    ####################################################
+
+    - name: Unit Tests
+      run: |
+        php artisan test \
+          --testsuite=Unit
+
+    ####################################################
+    # SUCCESS GATE
+    ####################################################
+
+    - name: PR Validation Passed
+      run: |
+        echo "====================================="
+        echo "PR VALIDATION SUCCESSFUL"
+        echo "READY FOR CI PIPELINE"
+        echo "====================================="

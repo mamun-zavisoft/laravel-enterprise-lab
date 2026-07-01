@@ -185,17 +185,20 @@ jobs:
           DB_DATABASE: testing
           DB_USERNAME: laravel
           DB_PASSWORD: laravel
-
+        
         run: |
-          php artisan migrate:status
+          php artisan migrate --force
+
+        
 
       #################################################
       # 11. MIGRATION VALIDATION
       #################################################
 
       - name: Migration Validation
+
         run: |
-          php artisan migrate --force
+          php artisan migrate:status
 
       #################################################
       # 12. MIGRATION ROLLBACK VALIDATION

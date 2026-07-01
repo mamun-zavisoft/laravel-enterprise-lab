@@ -31,6 +31,12 @@ jobs:
           MYSQL_DATABASE: testing
           MYSQL_USER: laravel
           MYSQL_PASSWORD: laravel
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: testing
+          DB_USERNAME: laravel          # গিটহাব অ্যাকশন্সের ডিফল্ট ইউজার সাধারণত root হয়
+          DB_PASSWORD: ""
 
         ports:
           - 3306:3306
@@ -113,12 +119,6 @@ jobs:
       #################################################
       # 5. COMPOSER CACHE
       #################################################
-      - name: Debug
-        run: |
-          pwd
-          ls -la
-          find . -name composer.lock
-
       - name: Cache Dependencies
         uses: actions/cache@v4
         with:
@@ -141,11 +141,9 @@ jobs:
       #################################################
       # 7. ENVIRONMENT VALIDATION
       #################################################
-
       - name: Prepare Environment
         run: |
           cp .env.example .env
-
           php artisan key:generate
 
       #################################################
@@ -176,28 +174,7 @@ jobs:
       #################################################
       # 10. DATABASE CONNECTIVITY VALIDATION
       #################################################
-
-      - name: Debug Laravel Environment
-        run: |
-          echo "===== ENV ====="
-          env | grep DB_ || true
-
-          echo ""
-          echo "===== .env ====="
-          cat .env | grep DB_ || true
-
-          echo ""
-          echo "===== Laravel Config ====="
-          php artisan tinker --execute="dump(config('database.connections.mysql'));"
-
       - name: Run Migrations
-        env:
-          DB_CONNECTION: mysql
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_DATABASE: testing
-          DB_USERNAME: laravel
-          DB_PASSWORD: laravel
         run: |
           php artisan migrate --force
 
@@ -207,13 +184,6 @@ jobs:
       #################################################
 
       - name: Migration Validation
-        env:
-          DB_CONNECTION: mysql
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_DATABASE: testing
-          DB_USERNAME: laravel
-          DB_PASSWORD: laravel
         run: |
           php artisan migrate:status
 

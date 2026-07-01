@@ -91,7 +91,9 @@ jobs:
             tokenizer,
             xml,
             zip
-
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          
       #################################################
       # 3. PHP EXTENSION VALIDATION
       #################################################

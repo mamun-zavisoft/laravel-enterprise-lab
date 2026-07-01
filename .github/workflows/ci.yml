@@ -176,19 +176,20 @@ jobs:
       #################################################
       # 10. DATABASE CONNECTIVITY VALIDATION
       #################################################
+
       - name: Debug Laravel Environment
         run: |
           echo "===== ENV ====="
-          env | grep DB_
+          env | grep DB_ || true
 
           echo ""
           echo "===== .env ====="
-          cat .env | grep DB_
+          cat .env | grep DB_ || true
 
           echo ""
           echo "===== Laravel Config ====="
-          php artisan tinker --execute="
-          dump(config('database.connections.mysql'));"
+          php artisan tinker --execute="dump(config('database.connections.mysql'));"
+
       - name: Database Connectivity Validation
         env:
           DB_CONNECTION: mysql

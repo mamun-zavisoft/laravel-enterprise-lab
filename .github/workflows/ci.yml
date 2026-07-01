@@ -176,7 +176,19 @@ jobs:
       #################################################
       # 10. DATABASE CONNECTIVITY VALIDATION
       #################################################
+      - name: Debug Laravel Environment
+        run: |
+          echo "===== ENV ====="
+          env | grep DB_
 
+          echo ""
+          echo "===== .env ====="
+          cat .env | grep DB_
+
+          echo ""
+          echo "===== Laravel Config ====="
+          php artisan tinker --execute="
+          dump(config('database.connections.mysql'));"
       - name: Database Connectivity Validation
         env:
           DB_CONNECTION: mysql
@@ -186,18 +198,18 @@ jobs:
           DB_USERNAME: laravel
           DB_PASSWORD: laravel
         
+      
         run: |
-          php artisan migrate --force
+          php artisan migrate:status
 
         
-
       #################################################
       # 11. MIGRATION VALIDATION
       #################################################
 
       - name: Migration Validation
         run: |
-          php artisan migrate:status
+          php artisan migrate --force
 
       #################################################
       # 12. MIGRATION ROLLBACK VALIDATION

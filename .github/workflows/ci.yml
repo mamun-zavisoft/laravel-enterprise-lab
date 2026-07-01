@@ -19,7 +19,7 @@ jobs:
 
   ci-validation:
 
-    runs-on: self-hosted
+    runs-on: ubuntu
 
     services:
 
@@ -93,7 +93,7 @@ jobs:
             zip
         env:
           DEBIAN_FRONTEND: noninteractive
-          
+
       #################################################
       # 3. PHP EXTENSION VALIDATION
       #################################################

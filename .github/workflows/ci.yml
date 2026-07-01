@@ -19,7 +19,7 @@ jobs:
 
   ci-validation:
 
-    runs-on: ubuntu
+    runs-on: self-hosted
 
     services:
 
@@ -113,7 +113,11 @@ jobs:
       #################################################
       # 5. COMPOSER CACHE
       #################################################
-
+      - name: Debug
+        run: |
+          pwd
+          ls -la
+          find . -name composer.lock
       - name: Cache Dependencies
         uses: actions/cache@v4
 

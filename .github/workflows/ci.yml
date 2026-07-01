@@ -190,7 +190,7 @@ jobs:
           echo "===== Laravel Config ====="
           php artisan tinker --execute="dump(config('database.connections.mysql'));"
 
-      - name: Database Connectivity Validation
+      - name: Run Migrations
         env:
           DB_CONNECTION: mysql
           DB_HOST: 127.0.0.1
@@ -198,10 +198,8 @@ jobs:
           DB_DATABASE: testing
           DB_USERNAME: laravel
           DB_PASSWORD: laravel
-        
-      
         run: |
-          php artisan migrate:status
+          php artisan migrate --force
 
         
       #################################################
@@ -209,8 +207,15 @@ jobs:
       #################################################
 
       - name: Migration Validation
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: testing
+          DB_USERNAME: laravel
+          DB_PASSWORD: laravel
         run: |
-          php artisan migrate --force
+          php artisan migrate:status
 
       #################################################
       # 12. MIGRATION ROLLBACK VALIDATION
